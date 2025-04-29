@@ -1,0 +1,27 @@
+name: Auto Commit Excel Changes
+
+on:
+  schedule:
+    - cron: */1 * * * *'  # Every hour (adjust if needed)
+  workflow_dispatch:     # Manual trigger from GitHub UI
+
+jobs:
+  auto-commit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: false
+
+      - name: Set up Git config
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit changes
+        run: |
+          git add .
+          git commit -m "Auto-commit: updated at $(date)" || echo "No changes to commit"
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
