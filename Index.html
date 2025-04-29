@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Installed Product Lookup with Search & Column Filters</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    input { padding: 8px; width: 100%; max-width: 400px; margin-bottom: 10px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 10px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background-color: #f9f9f9; }
+    .pagination { margin-top: 10px; }
+    .pagination button {
+      padding: 6px 12px;
+      margin-right: 5px;
+      cursor: pointer;
+    }
+    .disabled { opacity: 0.5; pointer-events: none; }
+    .filter-row { background-color: #f0f0f0; }
+    .filter-cell { padding: 5px; }
+    #clearFilters { padding: 8px 12px; margin-top: 10px; cursor: pointer; }
+    
+    /* Styles for custom dropdown */
+    .filter-dropdown {
+      position: relative;
+    }
+    .filter-dropdown input {
+      width: 100%;
+      padding: 6px;
+      box-sizing: border-box;
+    }
+    .dropdown-options {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      z-index: 10;
+      background: white;
+      border: 1px solid #ccc;
+      max-height: 150px;
+      overflow-y: auto;
+      width: 100%;
+      display: none;
+    }
+    .dropdown-options div {
+      padding: 6px;
+      cursor: pointer;
+    }
+    .dropdown-options div:hover {
+      background-color: #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+  <h2>Installed Product Lookup with Search & Column Filters</h2>
+  <input type="text" id="search" placeholder="Search across all columns..." />
+  <button id="clearFilters">Clear Filters</button>
+  <table id="excelTable">
+    <thead id="tableHead"></thead>
+    <tbody id="tableBody"></tbody>
+  </table>
+  <div class="pagination">
+    <button id="prevPage">Previous</button>
+    <span id="pageInfo"></span>
+    <button id="nextPage">Next</button>
+  </div>
+
+  <script>
+    const fileUrl = "https://raw.githubusercontent.com/KennethVan-BR/InstalledProducts/main/Installed%20Product%20Lookup.xlsm";
+    let fullData = [];
+    let headers = [];
+    let currentPage = 1;
+    const rowsPerPage = 25;
+    let filteredData = [];
+    let columnFilters = [];
+
+    const tableHead = document.getElementById("tableHead");
+    const tableBody = document.getElementById("tableBody");
+    const searchInput = document.getElementById("search");
+    const prevBtn = document.getElementById("prevPage");
+    const nextBtn = document.getElementById("nextPage");
+    const pageInfo = document.getElementById("pageInfo");
+    const clearFiltersBtn = document.getElementById("clearFilters");
+
+    let searchTimeout;
+
+    fetch(fileUrl)
+      .then(response => response.arrayBuffer())
+      .then(data => {
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+
+        headers = jsonData[0];
+        fullData = jsonData.slice(1).map(row => processRow(row));
+        filteredData = fullData;
+
+        renderTableHead();
+        renderTable();
+
+        searchInput.addEventListener("input", debounce(() => {
+          currentPage = 1; // Reset to page 1 on new search
+          filterData(); // Apply the search filter
+          renderFilters(); // Re-render filters based on search results
+          renderTable();
+        }, 500)); // Delay the search filter by 500ms
+
+        prevBtn.addEventListener("click", () => {
+          if (currentPage > 1) {
+            currentPage--;
+            renderTable();
+          }
+        });
+
+        nextBtn.addEventListener("click", () => {
+          if (currentPage < getTotalPages()) {
+            currentPage++;
+            renderTable();
+          }
+        });
+
+        clearFiltersBtn.addEventListener("click", clearFilters); // Bind the clear filters button
+
+      });
+
+    function debounce(func, delay) {
+      return function() {
+        clearTimeout(searchTimeout);
+        searchTimeout = setTimeout(func, delay);
+      };
+    }
+
+    function processRow(row) {
+      row.forEach((cell, index) => {
+        if (isDateColumn(headers[index])) {
+          row[index] = convertExcelSerialDate(cell);
+        }
+      });
+      return row;
+    }
+
+    function renderTableHead() {
+      tableHead.innerHTML = "";
+
+      // Render Filter Row
+      const filterRow = document.createElement("tr");
+      filterRow.classList.add("filter-row");
+
+      headers.forEach((header, index) => {
+        const filterCell = document.createElement("th");
+        filterCell.classList.add("filter-cell");
+
+        const dropdownWrapper = document.createElement("div");
+        dropdownWrapper.classList.add("filter-dropdown");
+
+        const input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = `Filter by ${header}`;
+        input.dataset.index = index;
+
+        const optionsContainer = document.createElement("div");
+        optionsContainer.classList.add("dropdown-options");
+
+        // Populate initial options
+        const uniqueValues = [...new Set(filteredData.map(row => row[index]))].sort();
+        uniqueValues.forEach(value => {
+          const option = document.createElement("div");
+          option.textContent = value;
+          option.addEventListener("click", () => {
+            columnFilters[index] = value;
+            input.value = value;
+            optionsContainer.style.display = "none";
+            filterData();
+            renderTable();
+          });
+          optionsContainer.appendChild(option);
+        });
+
+        input.addEventListener("input", () => {
+          const val = input.value.toLowerCase();
+          optionsContainer.innerHTML = "";
+          uniqueValues
+            .filter(v => v.toLowerCase().includes(val))
+            .forEach(value => {
+              const option = document.createElement("div");
+              option.textContent = value;
+              option.addEventListener("click", () => {
+                columnFilters[index] = value;
+                input.value = value;
+                optionsContainer.style.display = "none";
+                filterData();
+                renderTable();
+              });
+              optionsContainer.appendChild(option);
+            });
+          optionsContainer.style.display = "block";
+        });
+
+        // Hide dropdown on blur
+        input.addEventListener("blur", () => {
+          setTimeout(() => optionsContainer.style.display = "none", 200);
+        });
+        input.addEventListener("focus", () => {
+          optionsContainer.style.display = "block";
+        });
+
+        dropdownWrapper.appendChild(input);
+        dropdownWrapper.appendChild(optionsContainer);
+        filterCell.appendChild(dropdownWrapper);
+        filterRow.appendChild(filterCell);
+      });
+
+      tableHead.appendChild(filterRow);
+
+      // Render Table Header Row
+      const headerRow = document.createElement("tr");
+      headers.forEach(header => {
+        const th = document.createElement("th");
+        th.textContent = header;
+        headerRow.appendChild(th);
+      });
+      tableHead.appendChild(headerRow);
+    }
+
+    function renderTable() {
+      const totalPages = Math.ceil(filteredData.length / rowsPerPage);
+      const start = (currentPage - 1) * rowsPerPage;
+      const end = start + rowsPerPage;
+
+      const paginatedRows = filteredData.slice(start, end);
+
+      tableBody.innerHTML = "";
+      const fragment = document.createDocumentFragment(); // Batch updates using fragment
+      paginatedRows.forEach(row => {
+        const tr = document.createElement("tr");
+        row.forEach(cell => {
+          const td = document.createElement("td");
+          td.textContent = cell !== undefined ? cell : "";
+          tr.appendChild(td);
+        });
+        fragment.appendChild(tr);
+      });
+      tableBody.appendChild(fragment); // Append all rows at once
+
+      pageInfo.textContent = `Page ${currentPage} of ${totalPages}`;
+      prevBtn.classList.toggle("disabled", currentPage === 1);
+      nextBtn.classList.toggle("disabled", currentPage === totalPages || totalPages === 0);
+    }
+
+    function renderFilters() {
+      // Re-render the filter row based on the current filtered data
+      const filterRow = tableHead.querySelector(".filter-row");
+      if (!filterRow) return;
+
+      const selectElements = filterRow.querySelectorAll("input");
+      selectElements.forEach((input, index) => {
+        // Clear existing options
+        const optionsContainer = input.nextElementSibling;
+        optionsContainer.innerHTML = '';
+        const uniqueValues = [...new Set(filteredData.map(row => row[index]))].sort();
+        uniqueValues.forEach(value => {
+          const option = document.createElement("div");
+          option.textContent = value;
+          option.addEventListener("click", () => {
+            columnFilters[index] = value;
+            input.value = value;
+            optionsContainer.style.display = "none";
+            filterData();
+            renderTable();
+          });
+          optionsContainer.appendChild(option);
+        });
+
+        // Apply the saved filter value if it exists
+        if (columnFilters[index]) {
+          input.value = columnFilters[index];
+        }
+      });
+    }
+
+    function filterData() {
+      const query = searchInput.value.toLowerCase();
+      filteredData = fullData.filter(row =>
+        row.join(" ").toLowerCase().includes(query) // Search across all columns
+      );
+
+      // Apply column-specific filters
+      filteredData = filteredData.filter(row =>
+        row.every((cell, index) => {
+          const filterValue = columnFilters[index];
+          return filterValue ? cell === filterValue : true;
+        })
+      );
+    }
+
+    function getTotalPages() {
+      return Math.ceil(filteredData.length / rowsPerPage);
+    }
+
+    function isDateColumn(header) {
+      // Modify these to match the actual column headers for "Date Installed" and "Date Shipped"
+      const dateColumns = ["Date Installed", "Date Shipped"];
+      return dateColumns.includes(header);
+    }
+
+    function convertExcelSerialDate(serial) {
+      if (serial === null || serial === undefined) return "";
+      const excelEpoch = new Date(1899, 11, 30); // Excel's starting date is 1899-12-30
+      const date = new Date(excelEpoch.getTime() + serial * 86400000); // Multiply by milliseconds per day
+      const mm = ('0' + (date.getMonth() + 1)).slice(-2); // Months are 0-based
+      const dd = ('0' + date.getDate()).slice(-2);
+      const yyyy = date.getFullYear();
+      return `${mm}/${dd}/${yyyy}`;
+    }
+
+    function clearFilters() {
+      searchInput.value = "";
+      columnFilters = [];
+      filteredData = fullData;
+
+      // Clear filter input fields
+      document.querySelectorAll(".filter-dropdown input").forEach(input => {
+        input.value = "";
+      });
+
+      renderFilters();
+      renderTable();
+    }
+  </script>
+</body>
+</html>
